@@ -1,0 +1,53 @@
+require("corsair")
+
+corsair.SetLightingControl()
+
+local keyboardDeviceIndex = 1
+
+local ledPositions = corsair.GetLEDPositionsByDeviceIndex(keyboardDeviceIndex)
+
+local minLEDPosition = Vector(0, 0)
+local maxLEDPosition = Vector(0, 0)
+
+for i, v in pairs(ledPositions) do
+	
+	minLEDPosition.x = math.min(minLEDPosition.x, v.x)
+	minLEDPosition.y = math.min(minLEDPosition.y, v.y)
+	
+	maxLEDPosition.x = math.max(maxLEDPosition.x, v.x)
+	maxLEDPosition.y = math.max(maxLEDPosition.y, v.y)
+		
+end
+
+print(minLEDPosition)
+print(maxLEDPosition)
+
+local totalLEDWidth = maxLEDPosition.x - minLEDPosition.x
+local totalLEDHeight = maxLEDPosition.y - minLEDPosition.y
+
+hook.Add("PostRender", "led_light_up", function()
+
+	local keyColors = {}
+	
+	render.CapturePixels()
+
+	local textureWidth = ScrW() --:Width()
+	local textureHeight = ScrH() --smallTex:Height()
+	
+	for id, pos in pairs(ledPositions) do
+		
+		local pixelX = math.Remap(pos.x, minLEDPosition.x, maxLEDPosition.x, 0, textureWidth)
+		local pixelY = math.Remap(pos.y, minLEDPosition.y, maxLEDPosition.y, 0, textureHeight)
+		
+		local r, g, b = render.ReadPixel(pixelX, pixelY)
+		
+		keyColors[#keyColors + 1] = { id = id, color = Color(r, g, b) }
+		
+	end
+	
+	corsair.SetLEDColors(keyColors)
+	
+	--render.SetRenderTarget(previousRenderTarget)
+	
+end)
+

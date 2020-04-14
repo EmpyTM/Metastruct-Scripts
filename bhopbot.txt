@@ -1,0 +1,391 @@
+local BhopBotUtils = {
+	save = function(filename, positions, connections)
+		
+		local data = "bhopbot v1\n"
+		data = data .. #positions .. "\n"
+		for i, pos in ipairs(positions) do
+			data = data .. pos.x .. " " .. pos.y .. " " .. pos.z .. "\n"	
+		end
+		
+		local conCount = 0
+		local conData = ""
+		for i, con in pairs(connections) do
+			conData = conData .. i .. ":" .. table.concat(con, " ") .. "\n"
+			conCount = conCount + 1
+		end
+		data = data .. conCount .. "\n" .. conData
+		print("Saving data to " .. filename .. ":\n" .. data)
+		file.Write(filename, data)
+	end,
+	load = function(filename)
+		
+		local f = file.Open(filename, "r", "DATA")
+		if not f then return nil end
+		
+		local sig = f:ReadLine()
+		if sig ~= "bhopbot v1" then
+			--f:Close()
+			--return
+		end
+		
+		local positions = {}
+		local connections = {}
+		
+		local posCount = tonumber(f:ReadLine())
+		for i = 1, posCount do
+			local posData = string.Split(f:ReadLine(), " ")
+			positions[#positions + 1] = Vector(tonumber(posData[1]), tonumber(posData[2]), tonumber(posData[3]))
+		end
+		
+		local conCount = tonumber(f:ReadLine())
+		for i = 1, conCount do
+			local conDataSplit = string.Split(f:ReadLine(), ":")
+			local conID = tonumber(conDataSplit[1])
+			local conDataString = string.Split(conDataSplit[2], " ")
+			connections[conID] = {}
+			for j, id in ipairs(conDataString) do
+				table.insert(connections[conID], tonumber(id))
+			end
+		end
+		
+		f:Close()
+		
+		return { positions = positions, connections = connections }
+		
+	end
+}
+
+local MavLib = {}
+
+function MavLib.GetPlayersSittingOn( ply )
+	
+	local players = player.GetAll()
+	
+	local sittingPlayers = {}
+	
+	for k, v in ipairs(players) do
+		
+		if v == ply then continue end
+		
+		if not v:InVehicle() then continue end
+		
+		if v:GetVehicle():GetParent() == ply then table.insert(sittingPlayers, v) end
+		
+	end
+	
+	return sittingPlayers
+		
+end
+
+function MavLib.FindPlayerByName( name )
+	
+	local players = player.GetAll()
+	
+	local ply = nil
+	
+	for k, v in ipairs(players) do
+		if string.find(v:GetName(), name) then
+			ply = v
+		end
+		
+	end
+	
+	return ply
+	
+end
+
+--[[
+
+	BEGINNING OF USER-EDITABLE DATA
+	DO NOT CHANGE CODE UNLESS YOU KNOW WHAT YOUR DOING
+	TALKING TO YOU LYRICAL/MAVAIN/WHATEVER
+
+]]--
+
+local nodePositions = {}
+local nodeConnections = {}
+
+local nodeData = BhopBotUtils.load("bhopbot/test.txt")
+nodePositions = nodeData.positions
+nodeConnections = nodeData.connections
+
+local ssJumpsEnabled = false		--Critical jumps
+local ssJumpsMinimumSpeed = 7000	--Minimum speed for critical jumps
+local timeMax = 5					--Time in seconds between nodes to wait before entering potentially stuck mode
+local empyMode = false				--Enabled Empy mode (wont bhop unless theres someone on the head)
+local altTabMode = false			--Enabled Alt Tab mode (will only bhop when not in focus)
+local turningRatio = 3				--Sets the turning ratio (higher = snappier turns)
+
+local currentNode = 1
+
+local function startBhopScript()
+
+	local stuck = false
+	local timeSince = CurTime()
+	
+	hook.Add("Think", "bhopbot", function()
+	
+		if altTabMode and system.HasFocus() then
+			timeSince = CurTime()
+			return
+		end
+		
+		local sittingPlayers = MavLib.GetPlayersSittingOn(LocalPlayer())
+		if #sittingPlayers == 0 and empyMode then 
+			timeSince = CurTime()
+			return
+		end
+	
+		--Distance checking code and node recalculation
+		local currentPos = LocalPlayer():GetPos()
+		local desiredPos = nodePositions[currentNode]
+		local xyDifference = (desiredPos - currentPos) * Vector(1, 1, 0)
+		local dist = xyDifference:Length()
+		
+		if dist < 500 then
+		
+			currentNode, _ = table.Random(nodeConnections[currentNode])
+			
+			timeSince = CurTime()
+			
+			stuck = false
+			
+		end
+		
+		if CurTime() - timeSince > timeMax then
+			
+			stuck = true
+		end
+	
+	end)
+	
+	timer.Create("bhopbot_stuck", 1, 0, function()
+		
+		if altTabMode and system.HasFocus() then return end
+		
+		local speed = (LocalPlayer():GetVelocity() * Vector(1, 1, 0)):Length()
+		
+		if stuck and speed < 150 then
+			
+			RunConsoleCommand("noclip")
+				
+		else
+			
+			if LocalPlayer():GetMoveType() == MOVETYPE_NOCLIP then
+				
+				RunConsoleCommand("noclip")
+					
+			end
+			
+		end
+		
+	end)
+	
+	hook.Add("CreateMove", "bhopbot_createmove", function(command)
+		
+		if altTabMode and system.HasFocus() then return end
+		local sittingPlayers = MavLib.GetPlayersSittingOn(LocalPlayer())
+		if #sittingPlayers == 0 and empyMode then return end
+		
+		if LocalPlayer():GetMoveType() == MOVETYPE_NOCLIP and not stuck then return end
+		
+		--Shared rotation/movement code
+		local currentPos = LocalPlayer():GetPos()
+		local desiredPos = nodePositions[currentNode]
+		
+		local xyDifference = (desiredPos - currentPos) * Vector(1, 1, 0)
+		
+		--Rotation Code
+		local dist = xyDifference:Length()
+		
+		if stuck then
+			
+			command:SetViewAngles(LerpAngle(math.Clamp(FrameTime() * turningRatio, 0, 1), LocalPlayer():EyeAngles(), (desiredPos - currentPos + Vector(0, 0, 64)):Angle()))
+			
+		else
+			
+			local speed = (LocalPlayer():GetVelocity() * Vector(1, 1, 0)):Length()
+			
+			if ssJumpsEnabled and speed > ssJumpsMinimumSpeed then
+				command:SetViewAngles(LerpAngle(math.Clamp(FrameTime() * turningRatio, 0, 1), LocalPlayer():EyeAngles(), Angle(89.5, xyDifference:Angle().y, 0)))
+			else
+				command:SetViewAngles(LerpAngle(math.Clamp(FrameTime() * turningRatio, 0, 1), LocalPlayer():EyeAngles(), Angle(0, xyDifference:Angle().y, 0)))
+			end
+		
+		end
+		
+
+		--Movement Code
+		local directionOffset = (LocalPlayer():EyeAngles() + Angle(0, 90, 0)):Forward():Dot(xyDifference:GetNormalized())
+		
+		local localVelocity = LocalPlayer():WorldToLocal(LocalPlayer():GetPos() + LocalPlayer():GetVelocity())
+			
+		command:SetForwardMove(3000)
+		command:SetSideMove(localVelocity.y * 150)
+		
+		if LocalPlayer():OnGround() then
+			--RunConsoleCommand("ssjump")
+			command:SetButtons(bit.bor(command:GetButtons(), IN_JUMP))
+		else
+			command:SetButtons(bit.band(command:GetButtons(), bit.bnot(IN_JUMP)))	
+		end
+		
+	end)
+	
+	hook.Add("PostDrawTranslucentRenderables", "bhopbot_render_world", function()
+		
+		local desiredPos = nodePositions[currentNode]
+		
+		render.DrawLine(desiredPos, desiredPos + Vector(0, 0, 64), Color(0, 100, 255), false)
+	
+	end)
+	
+	hook.Add("PostDrawHUD", "bhopbot_render_hud", function()
+	
+		local speed = (LocalPlayer():GetVelocity() * Vector(1, 1, 0)):Length()
+	
+		draw.SimpleText("Current speed: " .. speed, "BudgetLabel", 50, 50, Color(255, 255, 255))
+		draw.SimpleText("Stuck: " .. tostring(stuck), "BudgetLabel", 50, 70, Color(255, 255, 255))
+		draw.SimpleText("Time: " .. CurTime() - timeSince, "BudgetLabel", 50, 90, Color(255, 255, 255))
+		draw.SimpleText("Empy Mode: " .. tostring(empyMode), "BudgetLabel", 50, 110, Color(255, 255, 255))
+		draw.SimpleText("Alt Tab Mode: " .. tostring(altTabMode), "BudgetLabel", 50, 130, Color(255, 255, 255))
+	
+	end)
+
+end
+
+local function stopBhopScript()
+	hook.Remove("PostDrawTranslucentRenderables", "bhopbot_render_world")
+	hook.Remove("CreateMove", "bhopbot_createmove")
+	hook.Remove("Think", "bhopbot")
+	hook.Remove("PostDrawHUD", "bhopbot_render_hud")
+	timer.Remove("bhopbot_stuck")
+end
+
+--[[
+
+	START OF COMMAND PARSER
+	DON'T TOUCH IT UNLESS YOU KNOW WHAT YOU'RE DOING
+	LYRICAL/MAVAIN/WHATEVER THIS MEANS YOU
+
+]]--
+
+local bhopbot_allowed_users = {
+	["76561198051876445"] = true, --Empy
+	["76561198282073095"] = true, --Mavain
+	["76561198890518777"] = true, --Kotorin (Mavain alt)
+}
+
+local bhopbot_commands = {
+	start = {
+		args = {},
+		func = function()
+			startBhopScript()
+		end
+	},
+	stop = {
+		args = {},
+		func = function()
+			stopBhopScript()
+		end
+	},
+	reload = {
+		args = {},
+		func = function()
+			local nodeData = BhopBotUtils.load("bhopbot/test.txt")
+			nodePositions = nodeData.positions
+			nodeConnections = nodeData.connections
+			currentNode = 1
+		end
+	},
+	empy = {
+		args = {"bool"},
+		func = function(state)
+			empyMode = state	
+		end
+	},
+	altTab = {
+		args = {"bool"},
+		func = function(state)
+			altTabMode = state	
+		end
+	},
+	turningRatio = {
+		args = {"number"},
+		func = function(desiredRatio)
+			if desiredRatio == 0 then
+				turningRatio = 20
+			else
+				turningRatio = desiredRatio
+			end
+		end
+	},
+	add = {
+		args = {"player"},
+		func = function(ply)
+			bhopbot_allowed_users[ply:SteamID64()] = true
+		end
+	},
+	remove = {
+		args = {"player"},
+		func = function(ply)
+			bhopbot_allowed_users[ply:SteamID64()] = false
+		end
+	},
+	isAdded = {
+		args = {"player"},
+		func = function(ply)
+			Say(ply:GetNick() .. ": " .. tostring(tobool(bhopbot_allowed_users[ply:SteamID64()])))
+		end
+	}
+}
+
+hook.Add("OnPlayerChat", "bhopbot_commands", function(ply, text, teamChat, isDead)
+	
+	if bhopbot_allowed_users[ply:SteamID64()] then
+	
+		local commandParts = {}
+		for part in text:gmatch("([^%s]+)") do
+			table.insert(commandParts, part)
+		end
+	
+		if commandParts[1] == "@bhopbot" then
+			if not bhopbot_commands[commandParts[2]] then
+				Say("not a valid command lel")
+			else
+			
+				local expectedArguments = bhopbot_commands[commandParts[2]].args
+				if #commandParts - 2 < #expectedArguments then
+					Say("not enough args n shit")
+				else
+				
+					local passedArguments = {}
+					
+					for i = 1, #expectedArguments do
+						if expectedArguments[i] == "bool" then
+							table.insert(passedArguments, tobool(commandParts[i + 2]))
+						end
+						if expectedArguments[i] == "number" then
+							table.insert(passedArguments, tonumber(commandParts[i + 2]))
+						end
+						if expectedArguments[i] == "player" then
+							table.insert(passedArguments, MavLib.FindPlayerByName(commandParts[i + 2]))
+						end
+					end
+					
+					bhopbot_commands[commandParts[2]].func(unpack(passedArguments))
+					
+				end
+				
+			end
+			
+		end
+		
+	end
+	
+end)
+
+if false then
+	stopBhopScript()
+	hook.Remove("OnPlayerChat", "bhopbot_commands")
+end

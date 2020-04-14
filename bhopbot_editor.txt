@@ -1,0 +1,370 @@
+local editorWindow = nil
+
+local previousNodeConnection = nil
+local nodePositions = {}
+local nodeConnections = {}
+
+local BhopBotUtils = {
+	save = function(filename, positions, connections)
+		
+		local data = "bhopbot v1\n"
+		data = data .. #positions .. "\n"
+		for i, pos in ipairs(positions) do
+			data = data .. pos.x .. " " .. pos.y .. " " .. pos.z .. "\n"	
+		end
+		
+		local conCount = 0
+		local conData = ""
+		for i, con in pairs(connections) do
+			conData = conData .. i .. ":" .. table.concat(con, " ") .. "\n"
+			conCount = conCount + 1
+		end
+		data = data .. conCount .. "\n" .. conData
+		print("Saving data to " .. filename .. ":\n" .. data)
+		file.Write(filename, data)
+	end,
+	load = function(filename)
+		
+		local f = file.Open(filename, "r", "DATA")
+		if not f then return nil end
+		
+		local sig = f:ReadLine()
+		if sig ~= "bhopbot v1" then
+			--f:Close()
+			--return
+		end
+		
+		local positions = {}
+		local connections = {}
+		
+		local posCount = tonumber(f:ReadLine())
+		for i = 1, posCount do
+			local posData = string.Split(f:ReadLine(), " ")
+			positions[#positions + 1] = Vector(tonumber(posData[1]), tonumber(posData[2]), tonumber(posData[3]))
+		end
+		
+		local conCount = tonumber(f:ReadLine())
+		for i = 1, conCount do
+			local conDataSplit = string.Split(f:ReadLine(), ":")
+			local conID = tonumber(conDataSplit[1])
+			local conDataString = string.Split(conDataSplit[2], " ")
+			connections[conID] = {}
+			for j, id in ipairs(conDataString) do
+				table.insert(connections[conID], tonumber(id))
+			end
+		end
+		
+		f:Close()
+		
+		return { positions = positions, connections = connections }
+		
+	end
+}
+
+local NodeUtils = {
+	closestNodeToHitPos = function()
+		local cursor = LocalPlayer():GetEyeTrace().HitPos
+		if #nodePositions == 0 then return nil end
+		
+		local selectedNode = 1
+		local distance = nodePositions[1]:DistToSqr(cursor)
+		
+		for i, pos in ipairs(nodePositions) do
+			local d = pos:DistToSqr(cursor)
+			if d < distance then
+				selectedNode = i
+				distance = d
+			end
+		end
+		
+		return selectedNode
+	end
+}
+
+local EditorUtils = {
+	keyClicked = function(key)
+		return not LocalPlayer():KeyDown(key) and LocalPlayer():KeyDownLast(key)	
+	end,
+	getHitPos = function()
+		return LocalPlayer():GetEyeTrace().HitPos	
+	end
+}
+
+local doRender = true
+
+local GUIFunctions = {
+	OBJECTS = {
+		editorWindow = nil
+	},
+	drawWorld = function()
+		render.SetColorMaterial()
+		for i, pos in ipairs(nodePositions) do
+			
+			render.DrawLine(pos + Vector(-2, -2, 0), pos + Vector(-2, -2, 50), Color(0, 100, 255))
+			render.DrawLine(pos + Vector(-2,  2, 0), pos + Vector(-2,  2, 50), Color(0, 100, 255))
+			render.DrawLine(pos + Vector( 2,  2, 0), pos + Vector( 2,  2, 50), Color(0, 100, 255))
+			render.DrawLine(pos + Vector( 2, -2, 0), pos + Vector( 2, -2, 50), Color(0, 100, 255))
+				
+			render.DrawLine(pos + Vector(-2, -2, 50), pos + Vector(-2,  2, 50), Color(0, 100, 255))
+			render.DrawLine(pos + Vector(-2,  2, 50), pos + Vector( 2,  2, 50), Color(0, 100, 255))
+			render.DrawLine(pos + Vector( 2,  2, 50), pos + Vector( 2, -2, 50), Color(0, 100, 255))
+			render.DrawLine(pos + Vector( 2, -2, 50), pos + Vector(-2, -2, 50), Color(0, 100, 255))
+				
+			render.DrawLine(pos + Vector(-2, -2, 0), pos + Vector(-2,  2, 0), Color(0, 100, 255))
+			render.DrawLine(pos + Vector(-2,  2, 0), pos + Vector( 2,  2, 0), Color(0, 100, 255))
+			render.DrawLine(pos + Vector( 2,  2, 0), pos + Vector( 2, -2, 0), Color(0, 100, 255))
+			render.DrawLine(pos + Vector( 2, -2, 0), pos + Vector(-2, -2, 0), Color(0, 100, 255))
+				
+			render.DrawLine(pos + Vector(-7, -7, 0), pos + Vector(-7,  7, 0), Color(0, 100, 255))
+			render.DrawLine(pos + Vector(-7,  7, 0), pos + Vector( 7,  7, 0), Color(0, 100, 255))
+			render.DrawLine(pos + Vector( 7,  7, 0), pos + Vector( 7, -7, 0), Color(0, 100, 255))
+			render.DrawLine(pos + Vector( 7, -7, 0), pos + Vector(-7, -7, 0), Color(0, 100, 255))
+		
+		end
+		
+		for i, connection in pairs(nodeConnections) do
+			for j, other in pairs(connection) do
+				
+				local link = { pos = nodePositions[other] }
+				local node = { pos = nodePositions[i] }
+				
+				if node.pos == nil then continue end
+				if link.pos == nil then continue end
+				
+				local dist = link.pos:Distance(node.pos)
+				local relPos = link.pos - node.pos
+				local rotMat = Matrix()
+				rotMat:Rotate(relPos:Angle())
+				local calcPos = rotMat * Vector(dist, 0, 0)
+				
+				local arrowDist = 20
+				local arrowCount = dist / arrowDist
+				local arrowDistReal = dist / arrowCount
+				
+				local arrowDir = rotMat * Vector(1, 0, 0)
+				local arrowDirSide = rotMat * Vector(0, 1, 0)
+				
+				--[[
+				for j = 0, math.round(arrowCount) do
+					local clampedDist = math.Clamp((j * arrowDistReal + (CurTime() * arrowDistReal) % arrowDistReal), 0, dist)
+					local tipPos = arrowDir * clampedDist
+					render.DrawLine(node.pos + tipPos, node.pos + tipPos + rotMat * Vector(-3, 5, 0), Color(0, 255, 0))	
+					render.DrawLine(node.pos + tipPos, node.pos + tipPos + rotMat * Vector(-3, -5, 0), Color(0, 255, 0))	
+				end
+				]]
+				
+				local tipPos = arrowDir * dist
+				render.DrawLine(node.pos + tipPos, node.pos + tipPos + rotMat * Vector(-3, 5, 0), Color(0, 255, 0))	
+				render.DrawLine(node.pos + tipPos, node.pos + tipPos + rotMat * Vector(-3, -5, 0), Color(0, 255, 0))
+				
+				render.DrawLine(node.pos, node.pos + calcPos, Color(0, 255, 0))
+			end
+		end
+		
+		local selectedNodeIndex = NodeUtils.closestNodeToHitPos()
+		if not selectedNodeIndex then return end
+		local selectedNode = { pos = nodePositions[selectedNodeIndex] }
+		local scale = 2 + math.cos(CurTime() * 6.21) * 0.5 + 0.5
+		local scale2 = 7 + math.cos(CurTime() * 6.21) * 0.5 + 0.5
+		render.DrawLine(selectedNode.pos + Vector(-scale, -scale, 0), selectedNode.pos + Vector(-scale, -scale, 50), Color(255, 0, 255))
+		render.DrawLine(selectedNode.pos + Vector(-scale,  scale, 0), selectedNode.pos + Vector(-scale,  scale, 50), Color(255, 0, 255))
+		render.DrawLine(selectedNode.pos + Vector( scale,  scale, 0), selectedNode.pos + Vector( scale,  scale, 50), Color(255, 0, 255))
+		render.DrawLine(selectedNode.pos + Vector( scale, -scale, 0), selectedNode.pos + Vector( scale, -scale, 50), Color(255, 0, 255))
+				
+		render.DrawLine(selectedNode.pos + Vector(-scale, -scale, 50), selectedNode.pos + Vector(-scale,  scale, 50), Color(255, 0, 255))
+		render.DrawLine(selectedNode.pos + Vector(-scale,  scale, 50), selectedNode.pos + Vector( scale,  scale, 50), Color(255, 0, 255))
+		render.DrawLine(selectedNode.pos + Vector( scale,  scale, 50), selectedNode.pos + Vector( scale, -scale, 50), Color(255, 0, 255))
+		render.DrawLine(selectedNode.pos + Vector( scale, -scale, 50), selectedNode.pos + Vector(-scale, -scale, 50), Color(255, 0, 255))
+				
+		render.DrawLine(selectedNode.pos + Vector(-scale, -scale, 0), selectedNode.pos + Vector(-scale,  scale, 0), Color(255, 0, 255))
+		render.DrawLine(selectedNode.pos + Vector(-scale,  scale, 0), selectedNode.pos + Vector( scale,  scale, 0), Color(255, 0, 255))
+		render.DrawLine(selectedNode.pos + Vector( scale,  scale, 0), selectedNode.pos + Vector( scale, -scale, 0), Color(255, 0, 255))
+		render.DrawLine(selectedNode.pos + Vector( scale, -scale, 0), selectedNode.pos + Vector(-scale, -scale, 0), Color(255, 0, 255))
+				
+		render.DrawLine(selectedNode.pos + Vector(-scale2, -scale2, 0), selectedNode.pos + Vector(-scale2,  scale2, 0), Color(255, 0, 255))
+		render.DrawLine(selectedNode.pos + Vector(-scale2,  scale2, 0), selectedNode.pos + Vector( scale2,  scale2, 0), Color(255, 0, 255))
+		render.DrawLine(selectedNode.pos + Vector( scale2,  scale2, 0), selectedNode.pos + Vector( scale2, -scale2, 0), Color(255, 0, 255))
+		render.DrawLine(selectedNode.pos + Vector( scale2, -scale2, 0), selectedNode.pos + Vector(-scale2, -scale2, 0), Color(255, 0, 255))
+		
+		if previousNodeConnection then
+			render.DrawLine(nodePositions[previousNodeConnection], EditorUtils.getHitPos(), Color(0, 255, 0))
+		end
+		
+	end,
+	createEditorWindow = function()
+		
+		if editorWindow and editorWindow:IsValid() then return end
+		
+		editorWindow = vgui.Create("DFrame")
+		editorWindow:SetSize(160, 240)
+		editorWindow:Center()
+		editorWindow:SetTitle("Bhopbot Editor")
+		editorWindow:SetVisible(true)
+		editorWindow:SetDraggable(true)
+		editorWindow:ShowCloseButton(true)
+		editorWindow:MakePopup()
+		
+		local clearButton = vgui.Create("DButton", editorWindow)
+		clearButton:SetText("Delete All Nodes")
+		clearButton:SetPos(5, 25)
+		clearButton:SetSize(150, 30)
+		clearButton.DoClick = function()
+			nodePositions = {}
+			nodeConnections = {}
+		end
+		
+		local clearForwardsButton = vgui.Create("DButton", editorWindow)
+		clearForwardsButton:SetText("Clear Forward Links")
+		clearForwardsButton:SetPos(5, 60)
+		clearForwardsButton:SetSize(150, 30)
+		clearForwardsButton.DoClick = function()
+			local selectedNodeIndex = NodeUtils.closestNodeToHitPos()
+			if not selectedNodeIndex then return end
+			nodeConnections[selectedNodeIndex] = nil
+		end
+		
+		local clearBackwardsButton = vgui.Create("DButton", editorWindow)
+		clearBackwardsButton:SetText("Clear Backward Links")
+		clearBackwardsButton:SetPos(5, 95)
+		clearBackwardsButton:SetSize(150, 30)
+		clearBackwardsButton.DoClick = function()
+			local selectedNodeIndex = NodeUtils.closestNodeToHitPos()
+			if not selectedNodeIndex then return end
+			
+			for connectionID, connectionTable in pairs(nodeConnections) do
+				for index, otherID in pairs(connectionTable) do
+					if otherID == selectedNodeIndex then
+						table.remove(connectionTable, index)	
+					end
+				end
+			end
+			
+		end
+		
+		local deleteNode = vgui.Create("DButton", editorWindow)
+		deleteNode:SetText("Delete Node (BUGGED)")
+		deleteNode:SetPos(5, 130)
+		deleteNode:SetSize(150, 30)
+		deleteNode.DoClick = function()
+			local selectedNodeIndex = NodeUtils.closestNodeToHitPos()
+			if not selectedNodeIndex then return end
+			
+			-- Clear front links
+			nodeConnections[selectedNodeIndex] = nil
+			
+			-- Clear back links
+			for connectionID, connectionTable in pairs(nodeConnections) do
+				for index, otherID in pairs(connectionTable) do
+					if otherID == selectedNodeIndex then
+						table.remove(connectionTable, index)	
+					end
+				end
+			end
+			
+			-- Revert indices
+			for connectionID, connectionTable in pairs(nodeConnections) do
+				for index, otherID in pairs(connectionTable) do
+					if otherID > selectedNodeIndex then
+						connectionTable[index] = otherID - 1	
+					end
+				end
+			end
+		
+			-- Remove non existent indices
+			for connectionID, connectionTable in pairs(nodeConnections) do
+				if connectionID > selectedNodeIndex then
+					nodeConnections[connectionID - 1] = nodeConnections[connectionID]	
+				end
+				if connectionID > #nodePositions then nodeConnections[connectionID] = nil end	
+			end
+			
+			table.remove(nodePositions, selectedNodeIndex)
+		end
+		
+		local export = vgui.Create("DButton", editorWindow)
+		export:SetText("Export Node Configuration")
+		export:SetPos(5, 165)
+		export:SetSize(150, 30)
+		export.DoClick = function()
+			if not file.Exists("bhopbot", "DATA") then
+				file.CreateDir("bhopbot")	
+			end
+			BhopBotUtils.save("bhopbot/test.txt", nodePositions, nodeConnections)
+		end
+		
+		local import = vgui.Create("DButton", editorWindow)
+		import:SetText("Import Node Configuration")
+		import:SetPos(5, 200)
+		import:SetSize(150, 30)
+		import.DoClick = function()
+			local data = BhopBotUtils.load("bhopbot/test.txt")
+			nodePositions = data.positions
+			nodeConnections = data.connections
+		end
+	end
+}
+
+local function bhopbotEditorThink()
+	
+	if EditorUtils.keyClicked(IN_ATTACK2) then
+	
+		local pos = EditorUtils.getHitPos()
+		
+		nodePositions[#nodePositions + 1] = pos
+		
+	end
+	
+	if EditorUtils.keyClicked(IN_ATTACK) then
+		
+		local closestNode = NodeUtils.closestNodeToHitPos()
+		
+		if not previousNodeConnection then
+			previousNodeConnection = closestNode
+			return
+		end
+		
+		if previousNodeConnection == closestNode then
+			chat.AddText("[Bhop Editor] ERR: Node can not have itself as a link!")
+			previousNodeConnection = nil
+			return	
+		end
+		
+		if nodeConnections[previousNodeConnection] then
+			for i, link in pairs(nodeConnections[previousNodeConnection]) do
+				if link == closestNode then
+					chat.AddText("[Bhop Editor] ERR: Parent node already has a link to this node!")
+					previousNodeConnection = nil
+					return	
+				end
+			end
+		end
+		
+		if nodeConnections[closestNode] then
+			for i, link in pairs(nodeConnections[closestNode]) do
+				if link == previousNodeConnection then
+					chat.AddText("[Bhop Editor] ERR: Nodes can not create circular dependencies!")
+					previousNodeConnection = nil
+					return	
+				end
+			end
+		end
+		
+		if not nodeConnections[previousNodeConnection] then nodeConnections[previousNodeConnection] = {} end
+		table.insert(nodeConnections[previousNodeConnection], closestNode)
+		previousNodeConnection = nil
+		
+	end
+	
+	if EditorUtils.keyClicked(IN_WALK) then
+		GUIFunctions.createEditorWindow()
+	end
+	
+end
+
+hook.Add("Tick", "bhopbot_editor_tick", bhopbotEditorThink)
+hook.Add("PostDrawTranslucentRenderables", "bhopbot_editor_draw_world", GUIFunctions.drawWorld)
+
+if true then
+	hook.Remove("Tick", "bhopbot_editor_tick")
+	hook.Remove("PostDrawTranslucentRenderables", "bhopbot_editor_draw_world")
+end	
