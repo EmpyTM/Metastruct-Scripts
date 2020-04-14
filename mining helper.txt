@@ -1,0 +1,298 @@
+local buddies = {
+	--["STEAM_0:1:45805358"] = true --Empy
+}
+
+local enabled = true
+local esp = true
+local thirdperson = true
+local thirdpersonViewLerp = 10
+
+local patrolPositions = {
+	Vector(11952.661133, -2915.647949, -15245.583008),
+	Vector(11956.195313, 1110.259888, -15355.606445),
+	Vector(8812.446289, 2423.043213, -15227.006836),
+	Vector(9419.014648, -3025.824951, -15315.460938),
+	Vector(10751.613281, -1785.602661, -15315.017578)
+}
+
+local function NearBuddy(pos)
+	for i, ply in pairs(player.GetAll()) do
+		if buddies[ply:SteamID()] then
+			if ply:GetPos():DistToSqr(pos) < 300 * 300 then return true end
+		end
+	end
+	return false
+end
+
+local noclipState = false
+local function SetNoclip(state)
+	local currentState = LocalPlayer():GetMoveType() == MOVETYPE_NOCLIP
+	if currentState == state then return end
+	RunConsoleCommand("noclip")
+end
+
+local function GetClosestRockByRarity(rarityLevel)
+	local rocks = ents.FindByClass("mining_rock")
+	
+	if #rocks == 0 then return nil end
+	
+	local rocksOfRarityLevel = {}
+	for entID, rock in pairs(rocks) do
+		if not rock.GetRarity then continue end
+		if NearBuddy(rock:GetPos()) then continue end
+		if rock:GetRarity() == rarityLevel then 
+			rocksOfRarityLevel[#rocksOfRarityLevel + 1] = rock
+		end
+	end
+
+	if #rocksOfRarityLevel == 0 then return nil end
+	
+	table.sort(rocksOfRarityLevel, function(a, b) return a:GetPos():DistToSqr(LocalPlayer():GetShootPos()) < b:GetPos():DistToSqr(LocalPlayer():GetShootPos()) end)
+		
+	return rocksOfRarityLevel[1]
+end
+
+local function GetDroppedOreNearby()
+
+	local all_ores = ents.FindByClass("mining_ore")
+	local ores = {}
+	for entID, ore in pairs(all_ores) do
+		if NearBuddy(ore:GetPos()) then continue end
+		if ore:GetPos():DistToSqr(LocalPlayer():GetPos()) < 1000 * 1000 then ores[#ores + 1] = ore end	
+	end
+	
+	table.sort(ores, function(a, b) return a:GetPos():DistToSqr(LocalPlayer():GetPos()) < b:GetPos():DistToSqr(LocalPlayer():GetPos()) end)
+	
+	return ores
+	
+end
+
+local function GetBestRock()
+
+	local rock = GetClosestRockByRarity(2)
+	if rock ~= nil then return rock end
+	
+	rock = GetClosestRockByRarity(1)
+	if rock ~= nil then return rock end
+	
+	rock = GetClosestRockByRarity(0)
+	return rock
+
+end
+
+local function GetClosestRock()
+	
+	local rocks = ents.FindByClass("mining_rock")
+	
+	table.sort(rocks, function(a, b) return a:GetPos():DistToSqr(LocalPlayer():GetPos()) < b:GetPos():DistToSqr(LocalPlayer():GetPos()) end)
+		
+	return rocks[1]
+		
+end
+
+local function GetRockPos(rock)
+	local phys = rock:GetPhysicsObject()
+	if IsValid(phys) then 
+		return phys:GetMassCenter()
+	end
+	return rock:LocalToWorld(rock:OBBCenter())
+end
+
+hook.Add("Think", "rock_noclip", function()
+	if not enabled then return end	
+		
+	SetNoclip(noclipState)
+end)
+
+local patrolPositionIndex = 1
+local currentPatrolPosition = patrolPositions[patrolPositionIndex]
+
+local pickupNoclipState = true
+
+hook.Add("CreateMove", "rock_mine", function(command)
+	if not enabled then return end
+	
+	local bestRock = GetBestRock()
+	local closestRock = GetClosestRock()
+	local nearbyOres = GetDroppedOreNearby()
+	
+	local lookAtEntity = LocalPlayer():GetEyeTraceNoCursor().Entity
+	
+	--and closestRock and GetRockPos(closestRock):DistToSqr(LocalPlayer():GetShootPos()) > 300 * 300
+	
+	if #nearbyOres > 0 then
+		command:SetViewAngles((nearbyOres[1]:GetPos() - LocalPlayer():GetShootPos() + Vector(0, 0, 65)):Angle())
+		command:SetForwardMove(10)
+		noclipState = pickupNoclipState
+		pickupNoclipState = not pickupNoclipState
+		return
+	end
+	
+	if bestRock ~= nil then
+		command:SetViewAngles((GetRockPos(bestRock) - LocalPlayer():GetShootPos()):Angle())
+		local dist = GetRockPos(bestRock):Distance(LocalPlayer():GetShootPos())
+		local scaledDist = dist / 10
+		if dist > 100 then
+			command:SetForwardMove(8192)
+			noclipState = true
+		elseif dist > 50 then
+			command:SetForwardMove(30)
+			noclipState = true
+		else
+			command:SetButtons(bit.bor(command:GetButtons(), IN_ATTACK))
+			if lookAtEntity ~= nil and lookAtEntity:IsPlayer() then
+				command:SetForwardMove(2)
+				noclipState = true
+			else
+				noclipState = false	
+			end
+		end
+		return
+	end
+	
+	command:SetViewAngles((currentPatrolPosition - LocalPlayer():GetShootPos()):Angle())
+	if LocalPlayer():GetShootPos():DistToSqr(currentPatrolPosition) < 300 * 300 then
+		patrolPositionIndex = patrolPositionIndex + 1
+		if patrolPositionIndex > #patrolPositions then patrolPositionIndex = 1 end
+		currentPatrolPosition = patrolPositions[patrolPositionIndex]
+	end
+	command:SetForwardMove(8192)
+	noclipState = true
+	
+end)
+
+local customViewAngles = Angle()
+local oldPos = LocalPlayer():GetShootPos()
+
+hook.Add("CreateMove", "rock_thirdperson", function(command)
+	
+	if not enabled then return end
+	if not thirdperson then return end
+	
+	local sensitivity = GetConVar("sensitivity"):GetFloat()
+	customViewAngles.p = math.Clamp(customViewAngles.p + command:GetMouseY() * .022, -90, 90)
+	customViewAngles.y = customViewAngles.y - command:GetMouseX() * .022
+	
+end)
+
+hook.Add("CalcView", "rock_thirdperson", function(ply, origin, angles, fov, znear, zfar)
+	
+	if not enabled then return end
+	if not thirdperson then return end
+
+	local newPos = LerpVector(math.Clamp(RealFrameTime() * thirdpersonViewLerp, 0, 1), oldPos, origin)
+
+	local view = {}
+	view.drawviewer = true
+	view.origin = newPos - customViewAngles:Forward() * 120
+	view.angles = customViewAngles
+	view.fov = fov
+	
+	oldPos = newPos
+	
+	return view	
+
+end)
+
+	
+
+hook.Add("PostDrawTranslucentRenderables", "rock_esp", function(bDrawDepth, bDrawSkybox)
+	
+	if not enabled then return end
+	if not esp then return end
+	
+	--Find the rocks
+	local rocks = ents.FindByClass("mining_rock")
+
+	cam.IgnoreZ(true)
+	
+	for entID, rock in pairs(rocks) do
+	
+		rock:Draw()
+		
+	end
+	
+	cam.IgnoreZ(false)
+
+end)
+
+local bhopbot_commands = {
+	enabled = {
+		args = {"bool"},
+		func = function(state)
+			enabled = state	
+		end
+	},
+	esp = {
+		args = {"bool"},
+		func = function(state)
+			esp = state	
+		end
+	},
+	thirdperson = {
+		args = {"bool"},
+		func = function(state)
+			thirdperson = state	
+		end
+	},
+	viewlerp = {
+		args = {"number"},
+		func = function(viewlerp)
+			if viewlerp == 0 then
+				thirdpersonViewLerp = 20
+			else
+				thirdpersonViewLerp = viewlerp
+			end
+		end
+	}
+}
+
+hook.Add("OnPlayerChat", "bhopbot_commands", function(ply, text, teamChat, isDead)
+	
+	if ply == LocalPlayer() then
+	
+		local commandParts = {}
+		for part in text:gmatch("([^%s]+)") do
+			table.insert(commandParts, part)
+		end
+	
+		if commandParts[1] == ".mine" then
+			if not bhopbot_commands[commandParts[2]] then
+				Say("???")
+			else
+			
+				local expectedArguments = bhopbot_commands[commandParts[2]].args
+				if #commandParts - 2 < #expectedArguments then
+					Say("Not enough arguments.")
+				else
+				
+					local passedArguments = {}
+					
+					for i = 1, #expectedArguments do
+						if expectedArguments[i] == "bool" then
+							table.insert(passedArguments, tobool(commandParts[i + 2]))
+						end
+						if expectedArguments[i] == "number" then
+							table.insert(passedArguments, tonumber(commandParts[i + 2]))
+						end
+					end
+					
+					bhopbot_commands[commandParts[2]].func(unpack(passedArguments))
+					
+				end
+				
+			end
+			
+		end
+		
+	end
+	
+end)
+
+if not enabled then
+	hook.Remove("PostDrawTranslucentRenderables", "rock_esp")
+	hook.Remove("CreateMove", "rock_mine")
+	hook.Remove("Think", "rock_noclip")
+	hook.Remove("CalcView", "rock_thirdperson")
+	hook.Remove("CreateMove", "rock_thirdperson")
+end
