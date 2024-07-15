@@ -7,6 +7,7 @@ function helpers.get_players_sitting_on( ply )
 	for player_index, player_entity in ipairs(players) do
 		if ( player_entity == ply ) then continue end
 		if ( not v:InVehicle() ) then continue end
+        
         local veh = player_entity:GetVehicle()
 		if ( veh:GetParent() ~= ply ) then continue end
         
@@ -19,7 +20,6 @@ end
 function helpers.find_player_by_name( desired_name )	
 	local players = player.GetAll()
     local ply = nil
-
 	for player_index, player_entity in ipairs(players) do
         local player_name = v:GetName()
 		if ( string.find(player_name, desired_name) ) then
