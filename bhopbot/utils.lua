@@ -1,16 +1,19 @@
 local utils = {}
 
-function utils.error(condition, error_message)
-    if (condition) then
-        local err_fmt = "[BHopBot] ERROR: %s"
-        local err_out = string.format(err_fmt, error_message)
-        local err_len = 4
-        notification.AddLegacy(err_out, NOTIFY_ERROR, err_len)
+do
+    local err_fmt = "[BHopBot] ERROR: %s"
+    local err_len = 4
 
-        local snd = "buttons/button8.wav"
-        surface.PlaySound(snd)
+    function utils.error(condition, error_message)
+        if (condition) then
+            local err_out = string.format(err_fmt, error_message)
+            notification.AddLegacy(err_out, NOTIFY_ERROR, err_len)
 
-        return
+            local snd = "buttons/button8.wav"
+            surface.PlaySound(snd)
+
+            return
+        end
     end
 end
 
