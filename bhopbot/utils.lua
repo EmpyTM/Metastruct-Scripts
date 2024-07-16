@@ -3,13 +3,12 @@ local utils = {}
 do
     local err_fmt = "[BHopBot] ERROR: %s"
     local err_len = 4
+    local snd = "buttons/button8.wav"
 
     function utils.error(condition, error_message)
         if (condition) then
             local err_out = string.format(err_fmt, error_message)
             notification.AddLegacy(err_out, NOTIFY_ERROR, err_len)
-
-            local snd = "buttons/button8.wav"
             surface.PlaySound(snd)
 
             return
@@ -24,7 +23,11 @@ function utils.save(filename, positions, connections)
     payload.connections = {}
 
     for position_index, position in ipairs(positions) do
-        payload.positions[position_index] = { position.x, position.y, position.z }
+        local t = {}
+        t[1] = position.x
+        t[2] = position.y
+        t[3] = position.z
+        payload.positions[position_index] = t
     end
 
     for connection_index, connection in pairs(connections) do
