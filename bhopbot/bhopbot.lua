@@ -218,7 +218,7 @@ commands.add_command("isadded", function(ply)
     local name = ply:Name()
     local steamid64 = ply:SteamID64()
     chat.AddText(name, ": " .. allowed_users[steamid64])
-end, "Player")
+end, {"Player"})
 
 hook.Add("OnPlayerChat", "bhopbot_commands", function(ply, text)
     if not allowed_users[ply:SteamID64()] then return end
