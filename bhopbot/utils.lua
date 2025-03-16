@@ -1,9 +1,10 @@
 local utils = {}
 
 function utils.error(condition, error_message)
-    if condition then
-        local err_out = string.format("[BHopBot] ERROR: %s", error_message)
-        notification.AddLegacy(err_out, NOTIFY_ERROR, 4)
+    if (condition) then
+        local err_output = string.format("[BHopBot] ERROR: %s", error_message)
+        local time_to_close_seconds = 5
+        notification.AddLegacy(err_output, NOTIFY_ERROR, time_to_close_seconds)
         surface.PlaySound("buttons/button8.wav")
 
         return
@@ -11,11 +12,12 @@ function utils.error(condition, error_message)
 end
 
 function utils.save(filename, positions, connections)
-    local payload = {}
-    payload.version = bhopbot.version -- ensure format compatibility
-    payload.positions = {}
-    payload.connections = {}
-
+    local payload = {
+        version = bhopbot.version, -- ensure format compatibility
+        position = {},
+        connections = {}
+    }
+    
     for position_index, position in ipairs(positions) do
         payload.positions[position_index] = {position.x, position.y, position.z}
     end
@@ -24,15 +26,20 @@ function utils.save(filename, positions, connections)
         payload.connections[connection_index] = connection
     end
 
-    file.Write(filename, util.tableToJSON(payload))
+    payload = util.tableToJSON(payload)
+    file.Write(filename, payload)
 end
 
 function utils.load(filename)
     local json_file = file.Read(filename)
-    utils.error(not json_file, ("\"%s\": bhopbot data not found or invalid!"):format(filename))
+    
+    local err_no_json = ("\"%s\": bhopbot data not found or invalid!"):format(filename)
+    utils.error(not json_file, err_no_json)
 
     local dat = util.JSONToTable(json_file)
-    utils.error(not dat.version or dat.version ~= bhopbot.version, ("mismatched version \"%s\" does not match the newest release \"%s\""):format(dat.version, bhopbot.version))
+
+    local err_version_mismatch = ("mismatched version \"%s\" does not match the newest release \"%s\""):format(dat.version, bhopbot.version)
+    utils.error(not dat.version or dat.version ~= bhopbot.version, err_version_mismatch)
 
     return {positions = positions, connections = connections}
 end
