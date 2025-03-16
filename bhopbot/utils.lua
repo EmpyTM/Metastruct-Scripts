@@ -14,7 +14,7 @@ end
 function utils.save(filename, positions, connections)
     local payload = {
         version = bhopbot.version, -- ensure format compatibility
-        position = {},
+        positions = {},
         connections = {}
     }
     
